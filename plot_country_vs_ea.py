@@ -79,13 +79,12 @@ def gap(geo: str, cols: list[str]) -> pd.DataFrame:
 # ============================================================
 # 1) HEATMAP au dernier point — 4 agrégats puis 13 divisions
 # ============================================================
-def make_heatmap(cols, labels_dict, title, outpath, figwidth):
+def make_heatmap(cols, labels_dict, title, outpath, figwidth, ma_months=3):
     rows = []
     for g in GEOS_NON_EA:
-        gap_g = gap(g, cols).iloc[-1]
+        gap_g = gap(g, cols).rolling(ma_months).mean().iloc[-1]
         rows.append(gap_g.rename(g))
     H = pd.DataFrame(rows)
-    # Réordonne colonnes
     H = H[cols]
 
     fig, ax = plt.subplots(figsize=(figwidth, 3.6))
@@ -103,8 +102,10 @@ def make_heatmap(cols, labels_dict, title, outpath, figwidth):
             ax.text(j, i, f"{v:+.2f}", ha="center", va="center",
                     color=color, fontsize=8.5)
 
-    last_date = ribe("EA", cols).index[-1].strftime("%b %Y")
-    ax.set_title(f"{title}\nÉcart de contribution (pays − ZE), {last_date} — en points de %",
+    end = ribe("EA", cols).index[-1]
+    start = end - pd.DateOffset(months=ma_months - 1)
+    period = f"{start.strftime('%b')}–{end.strftime('%b %Y')}"
+    ax.set_title(f"{title}\nÉcart de contribution (pays − ZE), moyenne {ma_months} mois ({period}) — pp",
                  fontsize=11)
     cbar = plt.colorbar(im, ax=ax, shrink=0.85)
     cbar.set_label("pp", fontsize=9)
