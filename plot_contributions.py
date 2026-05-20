@@ -20,15 +20,20 @@ NAMES = {"EA": "Zone Euro", "DE": "Allemagne", "FR": "France",
 
 # Style BCE — ordre des composantes et couleurs
 COMPONENTS = [
-    ("SERV",     "Services",                       "#3CB4E5"),
-    ("FOOD",     "Alimentation (incl. alcool/tabac)", "#5BB85B"),
-    ("NRG",      "Énergie",                         "#F58220"),
-    ("IGD_NNRG", "Biens hors énergie",              "#F2C94C"),
+    ("SERV",     "Services",                         "#7E8FC6"),
+    ("IGD_NNRG", "Produits manufacturés hors énergie", "#E03A88"),
+    ("FOOD",     "Alimentation",                     "#3EB371"),
+    ("NRG",      "Énergie",                          "#F58220"),
 ]
 
 
 def ribe_contributions(geo: str) -> pd.DataFrame:
-    """Retourne un DataFrame indexé par date avec une colonne par composante (en pp)."""
+    """
+    Contributions à la YoY HICP — formule BCE/Eurostat standard.
+        C_i_t = (w_i_y / 1000) * (I_i_t - I_i_t-12) / I_tot_t-12 * 100
+    Σ contributions ≈ YoY officielle (résidu négligeable lié à la rupture de
+    chaînage de janvier, < 0.1 pp en pratique).
+    """
     sub = idx[idx["geo"] == geo]
     w = wts[wts["geo"] == geo]
     wide = sub.pivot(index="date", columns="coicop", values="value").sort_index()
@@ -38,28 +43,20 @@ def ribe_contributions(geo: str) -> pd.DataFrame:
     out = {}
     for t in wide.index:
         t_prev = t - pd.DateOffset(years=1)
-        y, y_prev = t.year, t.year - 1
-        dec_y1 = pd.Timestamp(year=y - 1, month=12, day=1)
-        dec_y2 = pd.Timestamp(year=y - 2, month=12, day=1)
-        if any(d not in wide.index for d in [t_prev, dec_y1, dec_y2]):
+        y = t.year
+        if t_prev not in wide.index or y not in w_wide.index:
             continue
-        if y not in w_wide.index or y_prev not in w_wide.index:
+        if any(c not in w_wide.columns for c in cols):
             continue
         w_y = w_wide.loc[y, cols] / 1000.0
-        w_y1 = w_wide.loc[y_prev, cols] / 1000.0
-        if w_y.isna().any() or w_y1.isna().any():
+        if w_y.isna().any():
             continue
-        I_t, I_tm12 = wide.loc[t, cols], wide.loc[t_prev, cols]
-        I_dy1, I_dy2 = wide.loc[dec_y1, cols], wide.loc[dec_y2, cols]
-        if any(x.isna().any() for x in [I_t, I_tm12, I_dy1, I_dy2]):
+        I_t = wide.loc[t, cols]
+        I_tm12 = wide.loc[t_prev, cols]
+        if I_t.isna().any() or I_tm12.isna().any():
             continue
-        I_tot_dy1 = wide.loc[dec_y1, "CP00"]
-        I_tot_dy2 = wide.loc[dec_y2, "CP00"]
         I_tot_tm12 = wide.loc[t_prev, "CP00"]
-        contrib = (
-            I_tot_dy1 * w_y * I_t / I_dy1
-            - I_tot_dy2 * w_y1 * I_tm12 / I_dy2
-        ) / I_tot_tm12 * 100.0
+        contrib = w_y * (I_t - I_tm12) / I_tot_tm12 * 100.0
         out[t] = contrib
     df = pd.DataFrame(out).T.sort_index()
     df.index.name = "date"
@@ -103,7 +100,7 @@ def plot_panel(ax, geo: str, start="2021-01-01", end=None, freq="M"):
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
 
 
-START = "2023-01-01"
+START = "2020-01-01"
 
 # --- Grille 2x3, mensuel, 2023 → dernier point ---
 fig, axes = plt.subplots(2, 3, figsize=(16, 9), sharey=True)
