@@ -103,27 +103,31 @@ def plot_panel(ax, geo: str, start="2021-01-01", end=None, freq="M"):
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
 
 
-# --- Grille 2x3 sur 2021-2025 ---
+START = "2023-01-01"
+
+# --- Grille 2x3, mensuel, 2023 → dernier point ---
 fig, axes = plt.subplots(2, 3, figsize=(16, 9), sharey=True)
 for ax, g in zip(axes.flatten(), GEOS):
-    plot_panel(ax, g, start="2021-01-01", freq="M")
+    plot_panel(ax, g, start=START, freq="M")
 
 handles, labels = axes[0, 0].get_legend_handles_labels()
 fig.legend(handles, labels, loc="upper center", ncol=5, fontsize=10,
            bbox_to_anchor=(0.5, 1.00), frameon=False)
-fig.suptitle("Contributions à l'inflation HICP (YoY, décomposition Ribe)",
+fig.suptitle("Contributions à l'inflation HICP (YoY mensuel, décomposition Ribe)",
              fontsize=13, y=1.04)
 fig.tight_layout()
-out = ROOT / "data" / "contributions_2021_2025.png"
+out = ROOT / "data" / "contributions_2023_now.png"
 fig.savefig(out, dpi=130, bbox_inches="tight")
 print(f"OK → {out}")
 
-# --- Bonus : ZE seule sur historique complet 2001-2025 ---
-fig, ax = plt.subplots(figsize=(13, 6))
-plot_panel(ax, "EA", start="2001-01-01", freq="Q")
-ax.legend(loc="upper left", fontsize=9, ncol=2)
-ax.set_title("Zone Euro — Contributions à l'inflation HICP (YoY trimestriel, Ribe)")
-fig.tight_layout()
-out2 = ROOT / "data" / "contributions_ea_long.png"
-fig.savefig(out2, dpi=130, bbox_inches="tight")
-print(f"OK → {out2}")
+# --- Un PNG par pays, mensuel, 2023 → dernier point ---
+for g in GEOS:
+    fig, ax = plt.subplots(figsize=(11, 5.5))
+    plot_panel(ax, g, start=START, freq="M")
+    ax.legend(loc="upper right", fontsize=9, ncol=2)
+    ax.set_title(f"{NAMES[g]} — Contributions à l'inflation HICP (YoY mensuel, Ribe)")
+    fig.tight_layout()
+    out_g = ROOT / "data" / f"contributions_{g}_2023_now.png"
+    fig.savefig(out_g, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    print(f"OK → {out_g}")
