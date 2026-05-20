@@ -79,47 +79,68 @@ def gap(geo: str, cols: list[str]) -> pd.DataFrame:
 # ============================================================
 # 1) HEATMAP au dernier point — 4 agrégats puis 13 divisions
 # ============================================================
+REF_START, REF_END = "2015-01-01", "2024-12-31"  # 10 ans, inclut volatilité COVID
+
+
 def make_heatmap(cols, labels_dict, title, outpath, figwidth, ma_months=3):
-    rows = []
+    """
+    Heatmap colorée par z-score (vs 2015-2019), annotée valeur brute en pp.
+    Cellules à |z|<1 : grisées (banal). |z|>2 : couleur saturée (inhabituel).
+    """
+    raw_rows, z_rows = [], []
     for g in GEOS_NON_EA:
-        gap_g = gap(g, cols).rolling(ma_months).mean().iloc[-1]
-        rows.append(gap_g.rename(g))
-    H = pd.DataFrame(rows)
-    H = H[cols]
+        gap_ts = gap(g, cols).rolling(ma_months).mean()
+        # Référence : écart-type historique du même écart pays-ZE
+        ref = gap_ts.loc[REF_START:REF_END]
+        sigma = ref.std()
+        current = gap_ts.iloc[-1]
+        z = current / sigma
+        raw_rows.append(current.rename(g))
+        z_rows.append(z.rename(g))
+    H = pd.DataFrame(raw_rows)[cols]
+    Z = pd.DataFrame(z_rows)[cols]
 
     fig, ax = plt.subplots(figsize=(figwidth, 3.6))
-    vmax = max(abs(H.values.min()), abs(H.values.max()))
-    im = ax.imshow(H.values, cmap="RdBu_r", vmin=-vmax, vmax=vmax, aspect="auto")
+    vmax = max(3.0, min(6.0, np.nanpercentile(np.abs(Z.values), 95)))
+    im = ax.imshow(Z.values, cmap="RdBu_r", vmin=-vmax, vmax=vmax, aspect="auto")
     ax.set_xticks(range(len(cols)))
     ax.set_xticklabels([labels_dict[c] for c in cols], rotation=35, ha="right", fontsize=9)
     ax.set_yticks(range(len(GEOS_NON_EA)))
     ax.set_yticklabels([NAMES[g] for g in GEOS_NON_EA], fontsize=10)
 
-    for i in range(H.shape[0]):
-        for j in range(H.shape[1]):
-            v = H.values[i, j]
-            color = "white" if abs(v) > vmax * 0.55 else "black"
-            ax.text(j, i, f"{v:+.2f}", ha="center", va="center",
-                    color=color, fontsize=8.5)
+    for i in range(Z.shape[0]):
+        for j in range(Z.shape[1]):
+            v_raw = H.values[i, j]
+            v_z = Z.values[i, j]
+            if abs(v_z) < 1:
+                color, weight = "#666", "normal"
+            elif abs(v_z) > vmax * 0.55:
+                color, weight = "white", "bold"
+            else:
+                color, weight = "black", "bold" if abs(v_z) > 2 else "normal"
+            ax.text(j, i, f"{v_raw:+.2f}", ha="center", va="center",
+                    color=color, fontsize=8.5, weight=weight)
 
     end = ribe("EA", cols).index[-1]
     start = end - pd.DateOffset(months=ma_months - 1)
     period = f"{start.strftime('%b')}–{end.strftime('%b %Y')}"
-    ax.set_title(f"{title}\nÉcart de contribution (pays − ZE), moyenne {ma_months} mois ({period}) — pp",
-                 fontsize=11)
+    ax.set_title(
+        f"{title}\nÉcart de contribution (pays − ZE), moy. {ma_months} mois ({period}). "
+        f"Couleur = z-score vs {REF_START[:4]}–{REF_END[:4]}, valeur = pp.",
+        fontsize=10.5)
     cbar = plt.colorbar(im, ax=ax, shrink=0.85)
-    cbar.set_label("pp", fontsize=9)
+    cbar.set_label("z-score (σ historique)", fontsize=9)
     fig.tight_layout()
     fig.savefig(outpath, dpi=130, bbox_inches="tight")
     plt.close(fig)
-    print(f"OK → {outpath}")
-    return H
+    print(f"OK → {outpath}  (vmax z = {vmax:.1f}σ)")
+    return H, Z
 
 
-H4 = make_heatmap(AGG4, AGG4_LBL, "Décomposition à 4 agrégats",
-                  ROOT / "data" / "heatmap_gap_4agg.png", 8.5)
-H13 = make_heatmap(DIV13, DIV13_LBL, "Décomposition à 13 divisions COICOP",
-                   ROOT / "data" / "heatmap_gap_13div.png", 13)
+H4, Z4 = make_heatmap(AGG4, AGG4_LBL, "Décomposition à 4 agrégats",
+                      ROOT / "data" / "heatmap_gap_4agg.png", 8.5)
+H13, Z13 = make_heatmap(DIV13, DIV13_LBL, "Décomposition à 13 divisions COICOP",
+                        ROOT / "data" / "heatmap_gap_13div.png", 13)
 
 # ============================================================
 # 2) STACKED BAR de l'écart, mensuel 2023+
@@ -175,8 +196,9 @@ plt.close(fig)
 print(f"OK → {out}")
 
 # Top 3 du dernier point par pays — résumé console
-print("\n=== Top 3 écarts (pp, dernier point) — décompo 4 agrégats ===")
+print(f"\n=== Top 3 écarts les + INHABITUELS (z-score vs {REF_START[:4]}-{REF_END[:4]}) — 13 div ===")
 for g in GEOS_NON_EA:
-    row = H4.loc[g].sort_values(key=abs, ascending=False)
-    parts = [f"{AGG4_LBL[c]} {v:+.2f}" for c, v in row.items()]
-    print(f"  {NAMES[g]:10s}: " + " | ".join(parts[:3]) + f"   (écart YoY total: {row.sum():+.2f})")
+    z_row = Z13.loc[g].sort_values(key=abs, ascending=False)
+    parts = [f"{DIV13_LBL[c]} (z={z_row[c]:+.1f}σ, {H13.loc[g,c]:+.2f} pp)"
+             for c in z_row.index[:3]]
+    print(f"  {NAMES[g]:10s}: " + " | ".join(parts))
