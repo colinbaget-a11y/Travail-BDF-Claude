@@ -1,11 +1,7 @@
 """
-Récupération des données HICP (Eurostat) — indice mensuel base 2015=100.
-
-Stratégie :
-- Une seule requête API avec filtres (geo, coicop, unit) — évite de tirer
-  tout le dataset (Eurostat plafonne à 50 catégories par requête).
-- Retry avec backoff exponentiel sur erreurs réseau.
-- Cache CSV local : on ne re-télécharge que si --refresh est passé.
+Récupération HICP — dataset prc_hicp_minr (ECOICOP v.2).
+Données les plus récentes (mises à jour mensuelles, ~M-1).
+On renomme TOTAL → CP00 pour rester cohérent avec le reste du code.
 """
 
 from __future__ import annotations
@@ -18,20 +14,15 @@ from pathlib import Path
 import eurostat
 import pandas as pd
 
-DATASET = "prc_hicp_midx"  # HICP - indice mensuel (2015 = 100)
+DATASET = "prc_hicp_minr"  # ECOICOP v.2, indices et taux mensuels
 
-GEOS = ["EA", "DE", "FR", "IT", "ES", "NL"]  # Zone Euro + 5 pays
+GEOS = ["EA", "DE", "FR", "IT", "ES", "NL"]
 
-# Agrégats spéciaux + 12 divisions COICOP
+# Agrégats spéciaux + 12 divisions. NB: TOTAL au lieu de CP00 dans ce dataset.
 COICOPS = [
-    "CP00",            # Total (all-items HICP)
-    "TOT_X_NRG_FOOD",  # Core (hors énergie, alimentation, alcool, tabac)
-    "IGD_NNRG",        # Biens industriels hors énergie
-    "SERV",            # Services
-    "NRG",             # Énergie
-    "FOOD",            # Alimentation (y c. alcool & tabac)
+    "TOTAL", "TOT_X_NRG_FOOD", "IGD_NNRG", "SERV", "NRG", "FOOD",
     "CP01", "CP02", "CP03", "CP04", "CP05", "CP06",
-    "CP07", "CP08", "CP09", "CP10", "CP11", "CP12",
+    "CP07", "CP08", "CP09", "CP10", "CP11", "CP12", "CP13",
 ]
 
 UNIT = "I15"  # Indice 2015 = 100
@@ -41,7 +32,6 @@ OUT_FILE = OUT_DIR / "hicp_midx.csv"
 
 
 def fetch_with_retry(filter_pars: dict, max_attempts: int = 4) -> pd.DataFrame:
-    """Appel Eurostat avec backoff exponentiel (2s, 4s, 8s)."""
     delay = 2
     last_err: Exception | None = None
     for attempt in range(1, max_attempts + 1):
@@ -62,17 +52,20 @@ def fetch_with_retry(filter_pars: dict, max_attempts: int = 4) -> pd.DataFrame:
 
 
 def to_long(df: pd.DataFrame) -> pd.DataFrame:
-    """Eurostat renvoie un format large (colonnes = périodes). On passe en long."""
     id_cols = [c for c in df.columns if not c[:4].isdigit()]
     long = df.melt(id_vars=id_cols, var_name="period", value_name="value")
     long = long.dropna(subset=["value"])
-    # 'geo\\TIME_PERIOD' devient 'geo' pour propreté
     long = long.rename(columns={c: c.split("\\")[0] for c in long.columns})
+    # Le dataset utilise coicop18 — on l'aligne sur 'coicop' pour le reste du code.
+    if "coicop18" in long.columns:
+        long = long.rename(columns={"coicop18": "coicop"})
+    # TOTAL → CP00 pour rester rétro-compatible
+    long["coicop"] = long["coicop"].replace({"TOTAL": "CP00"})
     return long.sort_values(["geo", "coicop", "period"]).reset_index(drop=True)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Télécharge HICP Eurostat (indice mensuel).")
+    parser = argparse.ArgumentParser(description="Télécharge HICP (prc_hicp_minr, ECOICOP v.2).")
     parser.add_argument("--refresh", action="store_true", help="Force le re-téléchargement.")
     args = parser.parse_args()
 
@@ -83,7 +76,7 @@ def main() -> int:
         print(f"\n{len(df)} lignes en cache.")
         return 0
 
-    filter_pars = {"geo": GEOS, "coicop": COICOPS, "unit": [UNIT]}
+    filter_pars = {"geo": GEOS, "coicop18": COICOPS, "unit": [UNIT]}
     raw = fetch_with_retry(filter_pars)
     long = to_long(raw)
 
@@ -91,10 +84,10 @@ def main() -> int:
     long.to_csv(OUT_FILE, index=False)
 
     print(f"\nOK — {len(long)} observations écrites dans {OUT_FILE}")
-    print("\nAperçu :")
-    print(long.head())
-    print("\nCouverture :")
-    print(long.groupby(["geo", "coicop"]).size().head(20))
+    print(f"Plage : {long['period'].min()} → {long['period'].max()}")
+    print("\nDernières obs CP00 par zone :")
+    last = long[long["coicop"] == "CP00"].groupby("geo")["period"].max()
+    print(last)
     return 0
 
 
